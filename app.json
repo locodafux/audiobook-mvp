@@ -2,9 +2,20 @@
   "expo": {
     "name": "audiobook-mvp",
     "slug": "audiobook-mvp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
     "android": {
       "usesCleartextTraffic": true,
-      "package": "com.locodafux.audiobookmvp"
+      "package": "com.locodafux.audiobookmvp",
+      "permissions": [
+        "INTERNET",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#020617"
+      }
     },
     "extra": {
       "eas": {
