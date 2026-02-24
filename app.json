@@ -2,32 +2,14 @@
   "expo": {
     "name": "audiobook-mvp",
     "slug": "audiobook-mvp",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "ios": {
-      "supportsTablet": true
-    },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true
+      "usesCleartextTraffic": true,
+      "package": "com.locodafux.audiobookmvp"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "plugins": [
-      "expo-sqlite",
-      "expo-audio"
-    ]
+    "extra": {
+      "eas": {
+        "projectId": "415db418-bb57-4a6a-9efe-6c2fb16094a0"
+      }
+    }
   }
 }
