@@ -4,23 +4,51 @@
     "slug": "audiobook-mvp",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
-      "usesCleartextTraffic": true,
       "package": "com.locodafux.audiobookmvp",
       "permissions": [
         "INTERNET",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#020617"
       }
+    },
+    "ios": {
+      "bundleIdentifier": "com.locodafux.audiobookmvp",
+      "supportsTablet": true
     },
     "extra": {
       "eas": {
         "projectId": "415db418-bb57-4a6a-9efe-6c2fb16094a0"
       }
-    }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0",
+            "ndkVersion": "26.1.10909125"
+          }
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-audio",
+        {
+          "allowsBackgroundAudio": true
+        }
+      ]
+    ]
   }
 }
