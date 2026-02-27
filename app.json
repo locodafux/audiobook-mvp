@@ -47,8 +47,7 @@
           }
         }
       ],
-      "expo-asset",
-      "./plugins/withAudioPro.js"
+      "expo-asset"
     ]
   }
 }
