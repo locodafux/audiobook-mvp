@@ -13,7 +13,9 @@
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "WAKE_LOCK",
+        "MODIFY_AUDIO_SETTINGS"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -22,7 +24,10 @@
     },
     "ios": {
       "bundleIdentifier": "com.locodafux.audiobookmvp",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "extra": {
       "eas": {
@@ -43,12 +48,7 @@
         }
       ],
       "expo-asset",
-      [
-        "expo-audio",
-        {
-          "allowsBackgroundAudio": true
-        }
-      ]
+      "./plugins/withAudioPro.js"
     ]
   }
 }
