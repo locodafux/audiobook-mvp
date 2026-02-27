@@ -44,9 +44,42 @@ export default function App() {
   const [position, setPosition] = useState(0);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   
+  // Refs to preserve values during cleanup
+  const playingIdRef = useRef(null);
   const soundRef = useRef(null);
   const progressInterval = useRef(null);
-  const hasTriggeredAutoNext = useRef(false);
+
+  // Update ref whenever playingId changes
+  useEffect(() => {
+    playingIdRef.current = playingId;
+  }, [playingId]);
+
+  // ============ LOGGING FUNCTIONS ============
+  
+  const logChapters = (chapterArray, title = "Chapters") => {
+    chapterArray.forEach((ch, index) => {
+      const isDownloaded = offlineIds.has(ch.id) ? '📱' : '☁️';
+      const isPlaying_now = playingId === ch.id ? '▶️' : '  ';
+    });
+  };
+  
+  const logPlaybackStatus = (status) => {
+    console.log('\n🎵 Playback Status:');
+    console.log(`   Position: ${Math.floor(status.positionMillis/1000)}s / ${Math.floor(status.durationMillis/1000)}s`);
+    console.log(`   Playing: ${status.isPlaying ? 'YES' : 'NO'}`);
+    console.log(`   Loaded: ${status.isLoaded ? 'YES' : 'NO'}`);
+    console.log(`   Current playingId: ${playingIdRef.current}`);
+    if (status.didJustFinish) console.log('   ✅ FINISHED!');
+  };
+
+  // ============ SORTING ============
+
+  // Sort chapters by name (only for full list)
+  const sortChapters = (chaptersToSort) => {
+    return [...chaptersToSort].sort((a, b) => {
+      return a.name.localeCompare(b.name);
+    });
+  };
 
   // Load auto-next setting
   useEffect(() => {
@@ -55,6 +88,7 @@ export default function App() {
         const saved = await AsyncStorage.getItem(AUTO_NEXT_KEY);
         if (saved !== null) {
           setAutoNext(JSON.parse(saved));
+          console.log('⚙️ Auto-next setting loaded:', JSON.parse(saved) ? 'ON' : 'OFF');
         }
       } catch (error) {
         console.error('Error loading auto-next setting:', error);
@@ -69,6 +103,7 @@ export default function App() {
     setAutoNext(newValue);
     try {
       await AsyncStorage.setItem(AUTO_NEXT_KEY, JSON.stringify(newValue));
+      console.log('⚙️ Auto-next setting saved:', newValue ? 'ON' : 'OFF');
     } catch (error) {
       console.error('Error saving auto-next setting:', error);
     }
@@ -77,77 +112,8 @@ export default function App() {
   // Clear all selected downloads
   const clearSelectedDownloads = () => {
     setSelectedForDownload(new Set());
+    console.log('🧹 Cleared download selections');
   };
-
-  // Auto-play next chapter when current ends - FIXED VERSION
-  useEffect(() => {
-    if (!sound || !autoNext) return;
-
-    const checkCompletion = async () => {
-      try {
-        const status = await sound.getStatusAsync();
-        
-        // Check if the audio just finished playing
-        if (status.isLoaded && status.didJustFinish && !hasTriggeredAutoNext.current) {
-          console.log('🔊 Chapter finished, looking for next chapter...');
-          hasTriggeredAutoNext.current = true;
-          
-          // Find current chapter index
-          const currentIndex = chapters.findIndex(c => c.id === playingId);
-          console.log('Current index:', currentIndex, 'Total chapters:', chapters.length);
-          
-          if (currentIndex !== -1 && currentIndex < chapters.length - 1) {
-            // Look for the next downloaded chapter
-            let nextChapterIndex = currentIndex + 1;
-            let foundNextChapter = null;
-            
-            // Loop through remaining chapters to find the next downloaded one
-            while (nextChapterIndex < chapters.length) {
-              const nextChapter = chapters[nextChapterIndex];
-              if (offlineIds.has(nextChapter.id)) {
-                foundNextChapter = nextChapter;
-                console.log('Found next downloaded chapter:', nextChapter.name);
-                break;
-              }
-              nextChapterIndex++;
-            }
-            
-            if (foundNextChapter) {
-              console.log('▶️ Auto-playing next chapter:', foundNextChapter.name);
-              // Small delay to ensure cleanup is complete
-              setTimeout(() => {
-                handlePlay(foundNextChapter, 0);
-                hasTriggeredAutoNext.current = false;
-              }, 500);
-            } else {
-              console.log('No more downloaded chapters found');
-              hasTriggeredAutoNext.current = false;
-            }
-          } else {
-            console.log('No next chapter available');
-            hasTriggeredAutoNext.current = false;
-          }
-        }
-      } catch (error) {
-        console.error('Auto-next error:', error);
-        hasTriggeredAutoNext.current = false;
-      }
-    };
-
-    // Set up a listener for playback status updates
-    const subscription = sound.setOnPlaybackStatusUpdate((status) => {
-      if (status.isLoaded && status.didJustFinish && autoNext) {
-        checkCompletion();
-      }
-    });
-
-    return () => {
-      if (subscription) {
-        subscription.remove();
-      }
-      hasTriggeredAutoNext.current = false;
-    };
-  }, [sound, autoNext, chapters, playingId, offlineIds]);
 
   // Check server availability
   const checkServerAvailability = useCallback(async () => {
@@ -161,11 +127,11 @@ export default function App() {
       });
       
       const isAvailable = response.ok;
-      console.log('📡 Server status:', isAvailable ? 'online' : 'offline');
+      console.log('📡 Server status:', isAvailable ? 'ONLINE' : 'OFFLINE');
       setIsOnline(isAvailable);
       return isAvailable;
     } catch (error) {
-      console.log('📡 Server offline:', error.message);
+      console.log('📡 Server status: OFFLINE (fetch failed)');
       setIsOnline(false);
       return false;
     }
@@ -186,9 +152,11 @@ export default function App() {
       const cached = await AsyncStorage.getItem(CHAPTERS_CACHE_KEY);
       if (cached) {
         const cachedData = JSON.parse(cached);
+        // Don't sort cached data - preserve original order
         setChapters(cachedData);
-        console.log('📚 Loaded', cachedData.length, 'chapters from cache');
         return true;
+      } else {
+        console.log('📭 No cached chapters found');
       }
     } catch (error) {
       console.error('Error loading cached chapters:', error);
@@ -198,8 +166,9 @@ export default function App() {
 
   const cacheChapters = async (chaptersData) => {
     try {
+      // Don't sort when caching - preserve original order
       await AsyncStorage.setItem(CHAPTERS_CACHE_KEY, JSON.stringify(chaptersData));
-      console.log('💾 Cached', chaptersData.length, 'chapters');
+      console.log(`💾 Cached ${chaptersData.length} chapters`);
     } catch (error) {
       console.error('Error caching chapters:', error);
     }
@@ -279,11 +248,13 @@ export default function App() {
               await sound.unloadAsync();
               setSound(null);
               setPlayingId(null);
+              playingIdRef.current = null;
               setIsPlaying(false);
               setCurrentTime(0);
               setPosition(0);
               setMetadata([]);
             }
+            console.log('🗑️ History cleared');
             Alert.alert("History Cleared", "Your progress has been reset.");
           } 
         }
@@ -296,6 +267,7 @@ export default function App() {
       const save = async () => {
         await AsyncStorage.setItem('last_played_id', playingId);
         await AsyncStorage.setItem('last_played_time', position.toString());
+        console.log(`💾 Saved progress for ${playingId}: ${position}s`);
       };
       save();
     }
@@ -308,11 +280,14 @@ export default function App() {
     if (lastId && lastTime) {
       const chapter = chapters.find(c => c.id === lastId);
       if (chapter && offlineIds.has(chapter.id)) {
+        console.log(`🔄 Resuming last session: ${chapter.name} at ${lastTime}s`);
         await handlePlay(chapter, parseFloat(lastTime));
       } else {
+        console.log('⚠️ Last session chapter not available');
         Alert.alert("Not Available", "The last played chapter is not downloaded.");
       }
     } else {
+      console.log('ℹ️ No saved session found');
       Alert.alert("No history", "You don't have a saved session to resume.");
     }
   };
@@ -320,6 +295,7 @@ export default function App() {
   const handleOfflineToggle = async () => {
     const newState = !showOfflineOnly;
     setShowOfflineOnly(newState);
+    console.log('👁️ Filter changed:', newState ? 'Showing only downloaded' : 'Showing all');
     if (newState) {
       const offlineChapters = chapters.filter(c => offlineIds.has(c.id));
       if (offlineChapters.length > 0) {
@@ -328,49 +304,107 @@ export default function App() {
     }
   };
 
-  const onPlaybackStatusUpdate = (status) => {
+  // AUTO-NEXT: Follows the EXACT order of the visible list
+  const onPlaybackStatusUpdate = useCallback((status) => {
     if (status.isLoaded) {
       setIsPlaying(status.isPlaying);
       setDuration(status.durationMillis / 1000);
+      setCurrentTime(status.positionMillis / 1000);
+      setPosition(status.positionMillis / 1000);
+      
+      if (status.didJustFinish || Math.floor(status.positionMillis/1000) % 30 === 0) {
+        logPlaybackStatus(status);
+      }
       
       if (status.didJustFinish) {
-        console.log('Chapter finished playing');
+        const currentPlayingId = playingIdRef.current;
+        
+        console.log('\n🔴🔴🔴 CHAPTER FINISHED 🔴🔴🔴');
+        console.log(`Current playing ID from ref: ${currentPlayingId}`);
+        console.log(`Auto-next enabled: ${autoNext ? 'YES' : 'NO'}`);
+        
         setIsPlaying(false);
-        setPosition(0);
         setCurrentTime(0);
+        setPosition(0);
+        
+        
+        if (autoNext && currentPlayingId) {
+          
+          const currentIndex = visibleChapters.findIndex(c => c.id === currentPlayingId);
+          console.log(`📍 Current index in list: ${currentIndex}`);
+          console.log(`📊 Total chapters in list: ${visibleChapters.length}`);
+          
+          if (currentIndex !== -1) {
+            if (currentIndex < visibleChapters.length - 1) {
+              // Get the very next chapter in the list
+              const nextChapter = visibleChapters[currentIndex + 1];
+              console.log(`\n➡️➡️➡️ AUTO-NEXT TRIGGERED ⬅️⬅️⬅️`);
+              console.log(`   From index ${currentIndex} → ${currentIndex + 1}`);
+              console.log(`   Next chapter: ${nextChapter.name}`);
+              console.log(`   Next chapter ID: ${nextChapter.id}`);
+              
+              // Small delay to ensure cleanup
+              setTimeout(() => {
+                console.log(`\n▶️ Playing next chapter: ${nextChapter.name}`);
+                handlePlay(nextChapter, 0);
+              }, 500);
+            } else {
+              console.log('\n🏁 End of list reached - no next chapter');
+            }
+          } else {
+            console.log('❌ Current chapter not found in visible list');
+          }
+        } else {
+          console.log('⏸️ Auto-next not triggered - disabled or no playing ID');
+        }
       }
     }
-  };
+  }, [autoNext, visibleChapters]);
 
   const handlePlay = useCallback(async (item, startTime = 0) => {
     try {
-      console.log('🎵 Playing:', item.name, 'at position:', startTime);
+      console.log(`\n▶️▶️▶️ PLAYING CHAPTER ▶️▶️▶️`);
+      console.log(`   Title: ${item.name}`);
+      console.log(`   ID: ${item.id}`);
+      console.log(`   Start time: ${startTime}s`);
+      
       setIsAudioLoading(true);
       
+      // Stop and unload current sound
       if (sound) {
+        console.log('   Stopping current playback');
+        await sound.stopAsync();
         await sound.unloadAsync();
         setSound(null);
       }
 
+      // Set playing ID - both state and ref
       setPlayingId(item.id);
+      playingIdRef.current = item.id;
+      console.log(`   playingId set to: ${item.id}`);
+      
       const audioUri = `${FileSystem.documentDirectory}${item.id}.mp3`;
       const metaUri = `${FileSystem.documentDirectory}${item.id}.json`;
 
-      // Load metadata - try local first, then server if online
+      // Load metadata
       try {
         const info = await FileSystem.getInfoAsync(metaUri);
         if (info.exists) {
           const content = await FileSystem.readAsStringAsync(metaUri);
           const parsedMeta = JSON.parse(content);
           setMetadata(Array.isArray(parsedMeta) ? parsedMeta : []);
+          console.log(`   📝 Loaded metadata from cache`);
         } else if (isOnline) {
+          console.log(`   🌐 Fetching metadata from server`);
           const res = await fetch(`${API_BASE}/metadata/${item.id}`);
           const data = await res.json();
           setMetadata(Array.isArray(data) ? data : []);
           
           // Cache metadata for offline use
           await FileSystem.writeAsStringAsync(metaUri, JSON.stringify(data));
+          console.log(`   💾 Cached metadata`);
         } else {
+          console.log(`   ⚠️ No metadata available`);
           setMetadata([]);
         }
       } catch (e) { 
@@ -378,27 +412,32 @@ export default function App() {
         setMetadata([]); 
       }
 
+      // Check if audio file exists
       const audioInfo = await FileSystem.getInfoAsync(audioUri);
       if (!audioInfo.exists) {
+        console.log(`   ❌ Audio file not found: ${audioUri}`);
         Alert.alert("Error", "Audio file not downloaded. Please download it first.");
         setIsAudioLoading(false);
         return;
       }
+      
+      console.log(`   ✅ Audio file found`);
 
+      // Create and play sound
+      console.log(`   🎵 Creating audio player`);
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUri },
         { 
           shouldPlay: true, 
           positionMillis: startTime * 1000,
           androidImplementation: 'MediaPlayer',
-          progressUpdateIntervalMillis: 500,
         },
         onPlaybackStatusUpdate
       );
       
       setSound(newSound);
       soundRef.current = newSound;
-      setIsPlaying(true);
+      console.log(`   ✅ Playback started\n`);
       
     } catch (e) { 
       console.error('Playback error:', e);
@@ -407,7 +446,7 @@ export default function App() {
     } finally {
       setIsAudioLoading(false);
     }
-  }, [sound, isOnline]);
+  }, [sound, isOnline, onPlaybackStatusUpdate]);
 
   const togglePlayPause = async () => {
     if (!sound) return;
@@ -415,8 +454,10 @@ export default function App() {
     try {
       if (isPlaying) {
         await sound.pauseAsync();
+        console.log('⏸️ Paused');
       } else {
         await sound.playAsync();
+        console.log('▶️ Resumed');
       }
     } catch (error) {
       console.error('Toggle play/pause error:', error);
@@ -429,8 +470,7 @@ export default function App() {
     try {
       const newPosition = Math.min(position + 10, duration);
       await sound.setPositionAsync(newPosition * 1000);
-      setPosition(newPosition);
-      setCurrentTime(newPosition);
+      console.log(`⏩ Seek forward to ${newPosition}s`);
     } catch (error) {
       console.error('Seek error:', error);
     }
@@ -442,8 +482,7 @@ export default function App() {
     try {
       const newPosition = Math.max(position - 10, 0);
       await sound.setPositionAsync(newPosition * 1000);
-      setPosition(newPosition);
-      setCurrentTime(newPosition);
+      console.log(`⏪ Seek backward to ${newPosition}s`);
     } catch (error) {
       console.error('Seek error:', error);
     }
@@ -454,8 +493,7 @@ export default function App() {
     
     try {
       await sound.setPositionAsync(time * 1000);
-      setPosition(time);
-      setCurrentTime(time);
+      console.log(`🎯 Seek to ${time}s`);
     } catch (error) {
       console.error('Seek error:', error);
     }
@@ -463,11 +501,13 @@ export default function App() {
 
   const refreshChapters = async () => {
     setIsRefreshing(true);
+    console.log('🔄 Refreshing chapters...');
     
     try {
       const isAvailable = await checkServerAvailability();
       
       if (!isAvailable) {
+        console.log('📡 Server unavailable - staying offline');
         Alert.alert(
           "Offline", 
           "You're offline. Showing downloaded chapters only.",
@@ -481,7 +521,9 @@ export default function App() {
       const data = await res.json();
       const chaptersData = data.items || [];
       
-      // Cache the chapters for offline use
+      console.log(`📥 Fetched ${chaptersData.length} chapters from server`);
+      
+      // Cache the chapters (preserve original order)
       await cacheChapters(chaptersData);
       setChapters(chaptersData);
       
@@ -497,6 +539,8 @@ export default function App() {
         } catch (e) {}
       }
       setOfflineIds(offline);
+      console.log(`📱 Found ${offline.size} downloaded files`);
+      
       
       Alert.alert("Success", "Chapters updated successfully!");
       
@@ -511,24 +555,32 @@ export default function App() {
   // Initial load
   useEffect(() => {
     const init = async () => {
+      console.log('\n🚀 APP INITIALIZING...\n');
+      
       try {
-        // Load cached chapters first
+        // Load cached chapters first (preserves order)
         await loadCachedChapters();
         
         // Then try to fetch fresh data if online
         if (isOnline) {
           try {
+            console.log('🌐 Online - fetching fresh chapters...');
             const res = await fetch(`${API_BASE}/chapters?limit=1000`);
             const data = await res.json();
             const chaptersData = data.items || [];
+            // Don't sort - preserve API order
             await cacheChapters(chaptersData);
             setChapters(chaptersData);
+            console.log(`📥 Fetched ${chaptersData.length} chapters from server`);
           } catch (error) {
-            console.log('Using cached chapters due to fetch error');
+            console.log('⚠️ Using cached chapters due to fetch error');
           }
+        } else {
+          console.log('📡 Offline - using cached chapters only');
         }
 
         // Check which chapters are downloaded
+        console.log('🔍 Scanning for downloaded files...');
         const offline = new Set();
         const currentChapters = chapters.length > 0 ? chapters : 
           await loadCachedChapters() ? JSON.parse(await AsyncStorage.getItem(CHAPTERS_CACHE_KEY)) : [];
@@ -544,31 +596,54 @@ export default function App() {
         }
         
         setOfflineIds(offline);
-        console.log('📱 Offline files:', offline.size);
+        console.log(`📱 Found ${offline.size} downloaded files`);
+        
         
       } catch (error) {
         console.error('Init error:', error);
       } finally { 
-        setLoading(false); 
+        setLoading(false);
+        console.log('✅ App initialization complete\n');
       }
     };
     
     init();
   }, [isOnline]);
 
-  // Determine which chapters to show based on online status
   const visibleChapters = useMemo(() => {
+    let filtered = [];
+    
     if (!isOnline) {
-      // When offline, ONLY show downloaded chapters
-      return chapters.filter(c => offlineIds.has(c.id));
+      // When offline, show downloaded chapters in their ORIGINAL order
+      filtered = chapters.filter(c => offlineIds.has(c.id));
     } else if (showOfflineOnly) {
-      // When online but filtered, show only downloaded
-      return chapters.filter(c => offlineIds.has(c.id));
+      // When showing only downloaded, preserve the ORIGINAL order
+      filtered = chapters.filter(c => offlineIds.has(c.id));
     } else {
-      // When online and not filtered, show ALL chapters
-      return chapters;
+      // When showing all chapters, sort them for better organization
+      filtered = sortChapters(chapters);
     }
+    
+    return filtered;
   }, [chapters, offlineIds, showOfflineOnly, isOnline]);
+
+  // Log visible chapters whenever they change
+
+
+  // Debug: Monitor playing ID and next chapter
+  useEffect(() => {
+    if (playingId && visibleChapters.length > 0) {
+      const currentIndex = visibleChapters.findIndex(c => c.id === playingId);
+      if (currentIndex !== -1) {
+        console.log(`\n🎯 Currently playing at index ${currentIndex}`);
+        if (currentIndex < visibleChapters.length - 1) {
+          console.log(`⏭️ Next in queue: ${visibleChapters[currentIndex + 1]?.name}`);
+        } else {
+          console.log(`🏁 This is the last chapter in the list`);
+        }
+      }
+    }
+  }, [playingId, visibleChapters]);
 
   const missingChapters = useMemo(() => 
     chapters.filter(c => c.is_ready && !offlineIds.has(c.id)), 
@@ -584,26 +659,32 @@ export default function App() {
     const toDownload = chapters.filter(c => selectedForDownload.has(c.id));
     setIsSyncModalVisible(false);
     
+    console.log(`\n⬇️ Starting download of ${toDownload.length} chapters:`);
+    
     for (const chapter of toDownload) {
       try {
         const audioUri = `${FileSystem.documentDirectory}${chapter.id}.mp3`;
         const metaUri = `${FileSystem.documentDirectory}${chapter.id}.json`;
         
-        console.log('⬇️ Downloading:', chapter.name);
+        console.log(`   Downloading: ${chapter.name}`);
         
         await Promise.all([
           FileSystem.downloadAsync(`${API_BASE}/download/${chapter.id}`, audioUri),
           FileSystem.downloadAsync(`${API_BASE}/metadata/${chapter.id}`, metaUri)
         ]);
         
-        setOfflineIds(prev => new Set([...prev, chapter.id]));
-        console.log('✅ Downloaded:', chapter.name);
+        setOfflineIds(prev => {
+          const newSet = new Set([...prev, chapter.id]);
+          console.log(`   ✅ Downloaded: ${chapter.name} (Total offline: ${newSet.size})`);
+          return newSet;
+        });
       } catch (err) { 
-        console.error('Download error:', err); 
+        console.error(`   ❌ Download error for ${chapter.name}:`, err); 
         Alert.alert("Download Error", `Failed to download ${chapter.name}`);
       }
     }
     setSelectedForDownload(new Set());
+    console.log('✅ Download batch complete\n');
   };
 
   const formatTime = (seconds) => {
@@ -724,7 +805,7 @@ export default function App() {
               )}
             </View>
           }
-          renderItem={({ item }) => {
+          renderItem={({ item, index }) => {
             const isOffline = offlineIds.has(item.id);
             const isCurrentlyPlaying = playingId === item.id;
             
@@ -747,7 +828,7 @@ export default function App() {
                     isCurrentlyPlaying && {color: '#3b82f6'},
                     !isOffline && styles.rowDisabled
                   ]} numberOfLines={1}>
-                    {item.name}
+                    {index + 1}. {item.name}
                   </Text>
                   <Text style={styles.rowSub}>
                     {isOffline ? "📱 Downloaded" : "☁️ Online"}
