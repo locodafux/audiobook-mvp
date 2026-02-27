@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { 
   View, Text, FlatList, TouchableOpacity, StyleSheet, 
-  StatusBar, ActivityIndicator, Modal, ScrollView, Alert, Dimensions 
+  StatusBar, ActivityIndicator, Modal, ScrollView, Alert, Dimensions,
+  Switch
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,7 +11,8 @@ import { Audio } from 'expo-av';
 import { 
   CheckCircle2, DownloadCloud, Library, X, Square, 
   CheckSquare, Trash2, Play, Pause, SkipBack, SkipForward,
-  ChevronDown, ChevronUp, Wifi, WifiOff, RefreshCw
+  ChevronDown, ChevronUp, Wifi, WifiOff, RefreshCw,
+  RotateCcw, ListX
 } from 'lucide-react-native';
 
 import TranscriptView from './components/TranscriptView';
@@ -18,6 +20,7 @@ import TranscriptView from './components/TranscriptView';
 const API_BASE = `https://unconvertibly-nonexpansive-marguerita.ngrok-free.dev/api/mobile`;
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CHAPTERS_CACHE_KEY = 'cached_chapters';
+const AUTO_NEXT_KEY = 'auto_next_setting';
 
 export default function App() {
   const [chapters, setChapters] = useState([]);
@@ -31,6 +34,7 @@ export default function App() {
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [autoNext, setAutoNext] = useState(false);
   
   // Audio player state
   const [sound, setSound] = useState(null);
@@ -42,6 +46,108 @@ export default function App() {
   
   const soundRef = useRef(null);
   const progressInterval = useRef(null);
+  const hasTriggeredAutoNext = useRef(false);
+
+  // Load auto-next setting
+  useEffect(() => {
+    const loadAutoNext = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(AUTO_NEXT_KEY);
+        if (saved !== null) {
+          setAutoNext(JSON.parse(saved));
+        }
+      } catch (error) {
+        console.error('Error loading auto-next setting:', error);
+      }
+    };
+    loadAutoNext();
+  }, []);
+
+  // Save auto-next setting
+  const toggleAutoNext = async () => {
+    const newValue = !autoNext;
+    setAutoNext(newValue);
+    try {
+      await AsyncStorage.setItem(AUTO_NEXT_KEY, JSON.stringify(newValue));
+    } catch (error) {
+      console.error('Error saving auto-next setting:', error);
+    }
+  };
+
+  // Clear all selected downloads
+  const clearSelectedDownloads = () => {
+    setSelectedForDownload(new Set());
+  };
+
+  // Auto-play next chapter when current ends - FIXED VERSION
+  useEffect(() => {
+    if (!sound || !autoNext) return;
+
+    const checkCompletion = async () => {
+      try {
+        const status = await sound.getStatusAsync();
+        
+        // Check if the audio just finished playing
+        if (status.isLoaded && status.didJustFinish && !hasTriggeredAutoNext.current) {
+          console.log('🔊 Chapter finished, looking for next chapter...');
+          hasTriggeredAutoNext.current = true;
+          
+          // Find current chapter index
+          const currentIndex = chapters.findIndex(c => c.id === playingId);
+          console.log('Current index:', currentIndex, 'Total chapters:', chapters.length);
+          
+          if (currentIndex !== -1 && currentIndex < chapters.length - 1) {
+            // Look for the next downloaded chapter
+            let nextChapterIndex = currentIndex + 1;
+            let foundNextChapter = null;
+            
+            // Loop through remaining chapters to find the next downloaded one
+            while (nextChapterIndex < chapters.length) {
+              const nextChapter = chapters[nextChapterIndex];
+              if (offlineIds.has(nextChapter.id)) {
+                foundNextChapter = nextChapter;
+                console.log('Found next downloaded chapter:', nextChapter.name);
+                break;
+              }
+              nextChapterIndex++;
+            }
+            
+            if (foundNextChapter) {
+              console.log('▶️ Auto-playing next chapter:', foundNextChapter.name);
+              // Small delay to ensure cleanup is complete
+              setTimeout(() => {
+                handlePlay(foundNextChapter, 0);
+                hasTriggeredAutoNext.current = false;
+              }, 500);
+            } else {
+              console.log('No more downloaded chapters found');
+              hasTriggeredAutoNext.current = false;
+            }
+          } else {
+            console.log('No next chapter available');
+            hasTriggeredAutoNext.current = false;
+          }
+        }
+      } catch (error) {
+        console.error('Auto-next error:', error);
+        hasTriggeredAutoNext.current = false;
+      }
+    };
+
+    // Set up a listener for playback status updates
+    const subscription = sound.setOnPlaybackStatusUpdate((status) => {
+      if (status.isLoaded && status.didJustFinish && autoNext) {
+        checkCompletion();
+      }
+    });
+
+    return () => {
+      if (subscription) {
+        subscription.remove();
+      }
+      hasTriggeredAutoNext.current = false;
+    };
+  }, [sound, autoNext, chapters, playingId, offlineIds]);
 
   // Check server availability
   const checkServerAvailability = useCallback(async () => {
@@ -228,6 +334,7 @@ export default function App() {
       setDuration(status.durationMillis / 1000);
       
       if (status.didJustFinish) {
+        console.log('Chapter finished playing');
         setIsPlaying(false);
         setPosition(0);
         setCurrentTime(0);
@@ -237,6 +344,7 @@ export default function App() {
 
   const handlePlay = useCallback(async (item, startTime = 0) => {
     try {
+      console.log('🎵 Playing:', item.name, 'at position:', startTime);
       setIsAudioLoading(true);
       
       if (sound) {
@@ -548,7 +656,7 @@ export default function App() {
           <TouchableOpacity 
             style={[styles.pill, (showOfflineOnly || !isOnline) && styles.pillActive]} 
             onPress={handleOfflineToggle}
-            disabled={!isOnline} // Disable toggle when offline since we're already showing only downloaded
+            disabled={!isOnline}
           >
             <Library size={14} color={(showOfflineOnly || !isOnline) ? "white" : "#94a3b8"} />
             <Text style={[styles.pillText, (showOfflineOnly || !isOnline) && {color: 'white'}]}>
@@ -562,6 +670,22 @@ export default function App() {
               <Text style={styles.pillText}>Available ({missingChapters.length})</Text>
             </TouchableOpacity>
           )}
+        </View>
+
+        {/* Auto-next toggle */}
+        <View style={styles.autoNextRow}>
+          <View style={styles.autoNextLeft}>
+            <RotateCcw size={16} color={autoNext ? "#3b82f6" : "#64748b"} />
+            <Text style={[styles.autoNextText, autoNext && styles.autoNextActive]}>
+              Auto-play next chapter
+            </Text>
+          </View>
+          <Switch
+            value={autoNext}
+            onValueChange={toggleAutoNext}
+            trackColor={{ false: '#1e293b', true: '#3b82f6' }}
+            thumbColor={autoNext ? '#ffffff' : '#94a3b8'}
+          />
         </View>
       </View>
 
@@ -646,10 +770,31 @@ export default function App() {
           <View style={styles.modalSheet}>
             <View style={styles.modalTop}>
               <Text style={styles.modalHeading}>Available to Download</Text>
-              <TouchableOpacity onPress={() => setIsSyncModalVisible(false)}>
-                <X color="white" size={24} />
-              </TouchableOpacity>
+              <View style={styles.modalHeaderButtons}>
+                {selectedForDownload.size > 0 && (
+                  <TouchableOpacity 
+                    onPress={clearSelectedDownloads}
+                    style={styles.modalHeaderBtn}
+                  >
+                    <ListX size={20} color="#ef4444" />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={() => setIsSyncModalVisible(false)}>
+                  <X color="white" size={24} />
+                </TouchableOpacity>
+              </View>
             </View>
+            
+            {selectedForDownload.size > 0 && (
+              <View style={styles.selectionInfo}>
+                <Text style={styles.selectionText}>
+                  {selectedForDownload.size} chapter{selectedForDownload.size !== 1 ? 's' : ''} selected
+                </Text>
+                <TouchableOpacity onPress={clearSelectedDownloads}>
+                  <Text style={styles.clearSelectionText}>Clear all</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             
             <ScrollView style={{maxHeight: 400}}>
               {missingChapters.map(ch => (
@@ -672,15 +817,30 @@ export default function App() {
               ))}
             </ScrollView>
             
-            <TouchableOpacity 
-              style={[styles.actionBtn, selectedForDownload.size === 0 && styles.actionBtnDisabled]} 
-              onPress={startDownload}
-              disabled={selectedForDownload.size === 0}
-            >
-              <Text style={styles.actionBtnText}>
-                Download {selectedForDownload.size} Item{selectedForDownload.size !== 1 ? 's' : ''}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.modalFooter}>
+              {selectedForDownload.size > 0 && (
+                <TouchableOpacity 
+                  style={styles.clearAllBtn}
+                  onPress={clearSelectedDownloads}
+                >
+                  <ListX size={20} color="#ef4444" />
+                  <Text style={styles.clearAllText}>Clear All</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity 
+                style={[
+                  styles.actionBtn, 
+                  selectedForDownload.size === 0 && styles.actionBtnDisabled,
+                  !selectedForDownload.size && { flex: 1 }
+                ]} 
+                onPress={startDownload}
+                disabled={selectedForDownload.size === 0}
+              >
+                <Text style={styles.actionBtnText}>
+                  Download {selectedForDownload.size} Item{selectedForDownload.size !== 1 ? 's' : ''}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -769,6 +929,16 @@ export default function App() {
                 <Text style={styles.controlLabel}>+10s</Text>
               </TouchableOpacity>
             </View>
+            
+            {/* Auto-next indicator */}
+            {autoNext && (
+              <View style={styles.autoNextIndicator}>
+                <RotateCcw size={12} color="#3b82f6" />
+                <Text style={styles.autoNextIndicatorText}>
+                  Auto-next enabled
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       )}
@@ -839,7 +1009,8 @@ const styles = StyleSheet.create({
   },
   pillRow: { 
     flexDirection: 'row', 
-    gap: 10 
+    gap: 10,
+    marginBottom: 12,
   },
   pill: { 
     flexDirection: 'row', 
@@ -858,6 +1029,28 @@ const styles = StyleSheet.create({
     fontSize: 14, 
     fontWeight: '600' 
   },
+  autoNextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 5,
+  },
+  autoNextLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  autoNextText: {
+    color: '#64748b',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  autoNextActive: {
+    color: '#3b82f6',
+  },
   chaptersContainer: {
     flex: 1,
   },
@@ -866,7 +1059,7 @@ const styles = StyleSheet.create({
   },
   chaptersWithPlayer: {
     flex: 1,
-    maxHeight: SCREEN_HEIGHT * 0.5,
+    maxHeight: SCREEN_HEIGHT * 0.45,
   },
   chaptersList: {
     padding: 20,
@@ -1025,6 +1218,17 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8
   },
+  autoNextIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  autoNextIndicatorText: {
+    color: '#3b82f6',
+    fontSize: 11,
+  },
   noTranscript: {
     height: 60,
     justifyContent: 'center',
@@ -1054,12 +1258,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row', 
     justifyContent: 'space-between', 
     alignItems: 'center',
-    marginBottom: 20 
+    marginBottom: 16
   },
   modalHeading: { 
     color: 'white', 
     fontSize: 20, 
     fontWeight: 'bold' 
+  },
+  modalHeaderButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  modalHeaderBtn: {
+    padding: 4,
+  },
+  selectionInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  selectionText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  clearSelectionText: {
+    color: '#ef4444',
+    fontSize: 13,
+    fontWeight: '600',
   },
   selectRow: { 
     flexDirection: 'row', 
@@ -1074,12 +1305,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     flex: 1
   },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  clearAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 15,
+    gap: 8,
+  },
+  clearAllText: {
+    color: '#ef4444',
+    fontWeight: '600',
+  },
   actionBtn: { 
     backgroundColor: '#3b82f6', 
     padding: 18, 
     borderRadius: 15, 
-    marginTop: 20, 
-    alignItems: 'center' 
+    alignItems: 'center',
+    flex: 2,
   },
   actionBtnDisabled: {
     backgroundColor: '#475569',
