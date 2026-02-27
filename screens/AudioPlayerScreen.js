@@ -1,5 +1,3 @@
-// components/PlayerControls.js
-import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Play, Pause, SkipBack, SkipForward } from 'lucide-react-native';
 

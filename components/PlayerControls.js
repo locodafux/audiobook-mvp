@@ -1,4 +1,3 @@
-// components/TranscriptView.js
 import React, { useEffect, useRef, useMemo } from 'react';
 import { FlatList, Text, TouchableOpacity, StyleSheet, View } from 'react-native';
 

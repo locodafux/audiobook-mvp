@@ -1,4 +1,3 @@
-// components/TranscriptView.js
 import React, { useEffect, useRef, useMemo } from 'react';
 import { FlatList, Text, TouchableOpacity, StyleSheet, View } from 'react-native';
 
@@ -11,7 +10,6 @@ export default function TranscriptView({ metadata = [], currentTime, onSeek }) {
     [currentTime, metadata]
   );
 
-  // Auto-scroll to the active line
   useEffect(() => {
     if (activeIndex !== -1 && listRef.current) {
       listRef.current.scrollToIndex({ index: activeIndex, viewPosition: 0.5, animated: true });
