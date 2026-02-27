@@ -9,12 +9,12 @@ import { useAudioPlayer, useAudioPlayerStatus, AudioSession } from 'expo-audio';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy'; 
 import { 
-  Play, Search, Headphones, Undo2, Redo2, PauseCircle, CheckCircle2, DownloadCloud, Check
+  Play, Search, Headphones, Undo2, Redo2, PauseCircle, CheckCircle2, 
+  DownloadCloud, Library, Square, CheckSquare, Trash2, Clock, X, SkipForward, SkipBack
 } from 'lucide-react-native';
 
 const IP = "unconvertibly-nonexpansive-marguerita.ngrok-free.dev";
 const API_BASE = `https://${IP}/api/mobile`;
-const ITEM_HEIGHT = 54; 
 
 export default function App() {
   const [chapters, setChapters] = useState([]);
@@ -24,290 +24,233 @@ export default function App() {
   const [offlineIds, setOfflineIds] = useState(new Set());
   const [playingId, setPlayingId] = useState(null);
   const [metadata, setMetadata] = useState([]); 
+  const [showOfflineOnly, setShowOfflineOnly] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   
-  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [isDownloadModalVisible, setIsDownloadModalVisible] = useState(false);
   const [selectedForDownload, setSelectedForDownload] = useState(new Set());
 
   const player = useAudioPlayer();
   const status = useAudioPlayerStatus(player);
-  const lastSaveTime = useRef(0);
-  const flatListRef = useRef(null);
-  const scrollOffset = useRef(0);
 
-  // --- 1. MEMOIZED DATA ---
-  // We define this at the top so it's available to all functions below
-  const activeChapter = useMemo(() => 
-    chapters.find(c => c.id === playingId), 
-  [playingId, chapters]);
-
-  const missingChapters = useMemo(() => 
-    chapters.filter(c => c.is_ready && !offlineIds.has(c.id)), 
-  [chapters, offlineIds]);
-
-  // --- 2. AUDIO LOGIC ---
-  const handleAction = useCallback(async (item, startTime = 0) => {
-    Keyboard.dismiss();
-    const fileUri = `${FileSystem.documentDirectory}${item.id}.mp3`;
-    setPlayingId(item.id);
-
-    try {
-      const metaRes = await fetch(`${API_BASE}/metadata/${item.id}`);
-      const data = await metaRes.json();
-      setMetadata(data);
-    } catch (e) { setMetadata([]); }
-    
-    const playAudio = () => {
-      player.replace({ uri: fileUri });
-      if (startTime > 0) player.seekTo(startTime); 
-      player.play();
-    };
-
-    if (offlineIds.has(item.id)) {
-      playAudio();
-    } else if (item.is_ready) {
-      setLoading(true);
-      try {
-        const res = await FileSystem.downloadAsync(`${API_BASE}/download/${item.id}`, fileUri);
-        if (res.status === 200) {
-          setOfflineIds(prev => new Set([...prev, item.id]));
-          playAudio();
-        }
-      } catch (err) {
-        Alert.alert("Sync Error", "Could not download chapter.");
-      }
-      setLoading(false);
-    }
-  }, [offlineIds, player]);
-
-  // --- 3. INITIALIZATION ---
-  useEffect(() => {
-    const initApp = async () => {
-      try {
-        if (AudioSession && typeof AudioSession.setCategoryAsync === 'function') {
-          await AudioSession.setCategoryAsync('Playback', {
-            staysActiveInBackground: true,
-            interruptionModeAndroid: 1, 
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false
-          });
-          await AudioSession.setActiveAsync(true);
-        }
-        await fetchChapters();
-      } catch (e) {
-        console.error("Initialization Error:", e);
-      }
-    };
-    initApp();
-  }, []);
-
-  const fetchChapters = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/chapters?limit=1000`);
-      const data = await res.json();
-      if (data?.items) {
-        setChapters(data.items);
-        const info = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory);
-        setOfflineIds(new Set(info.filter(f => f.endsWith('.mp3')).map(f => f.replace('.mp3', ''))));
-        
-        const saved = await AsyncStorage.getItem('MVS_PROGRESS');
-        if (saved) {
-          const { id, time } = JSON.parse(saved);
-          const ch = data.items.find(c => c.id === id);
-          if (ch) handleAction(ch, time);
-        }
-      }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, [handleAction]);
-
-  // --- 4. SLIDE SELECT LOGIC ---
-  const handleMove = (e) => {
-    const { locationY } = e.nativeEvent;
-    const index = Math.floor((locationY + scrollOffset.current) / ITEM_HEIGHT);
-    if (index >= 0 && index < missingChapters.length) {
-      const id = missingChapters[index].id;
-      if (!selectedForDownload.has(id)) {
-        setSelectedForDownload(prev => new Set([...prev, id]));
-      }
-    }
-  };
+  const activeChapter = useMemo(() => chapters.find(c => c.id === playingId), [playingId, chapters]);
+  const missingChapters = useMemo(() => chapters.filter(c => c.is_ready && !offlineIds.has(c.id)), [chapters, offlineIds]);
+  const visibleChapters = useMemo(() => {
+    return chapters.filter(c => {
+      const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
+      const isOffline = offlineIds.has(c.id);
+      return showOfflineOnly ? (matchesSearch && isOffline) : matchesSearch;
+    });
+  }, [chapters, searchQuery, offlineIds, showOfflineOnly]);
 
   const downloadSelected = async () => {
     const toDownload = missingChapters.filter(c => selectedForDownload.has(c.id));
-    if (toDownload.length === 0) return;
     setIsDownloadingAll(true);
-    setIsModalVisible(false);
+    setIsDownloadModalVisible(false);
     for (const chapter of toDownload) {
-      const fileUri = `${FileSystem.documentDirectory}${chapter.id}.mp3`;
+      const audioUri = `${FileSystem.documentDirectory}${chapter.id}.mp3`;
+      const metaUri = `${FileSystem.documentDirectory}${chapter.id}.json`;
       try {
-        const res = await FileSystem.downloadAsync(`${API_BASE}/download/${chapter.id}`, fileUri);
-        if (res.status === 200) setOfflineIds(prev => new Set([...prev, chapter.id]));
+        await Promise.all([
+          FileSystem.downloadAsync(`${API_BASE}/download/${chapter.id}`, audioUri),
+          FileSystem.downloadAsync(`${API_BASE}/metadata/${chapter.id}`, metaUri)
+        ]);
+        setOfflineIds(prev => new Set([...prev, chapter.id]));
       } catch (err) { console.error(err); }
     }
     setIsDownloadingAll(false);
     setSelectedForDownload(new Set());
   };
 
-  // Auto-Next & Progress Save
-  useEffect(() => {
-    if (status.didJustFinish) {
-      const currentIndex = chapters.findIndex(c => c.id === playingId);
-      if (currentIndex !== -1 && currentIndex < chapters.length - 1) {
-        const nextChapter = chapters[currentIndex + 1];
-        if (nextChapter.is_ready || offlineIds.has(nextChapter.id)) handleAction(nextChapter);
+  const handleAction = useCallback(async (item) => {
+    const audioUri = `${FileSystem.documentDirectory}${item.id}.mp3`;
+    const metaUri = `${FileSystem.documentDirectory}${item.id}.json`;
+    setPlayingId(item.id);
+    try {
+      const localMeta = await FileSystem.getInfoAsync(metaUri);
+      if (localMeta.exists) {
+        const content = await FileSystem.readAsStringAsync(metaUri);
+        setMetadata(JSON.parse(content));
+      } else {
+        const res = await fetch(`${API_BASE}/metadata/${item.id}`);
+        const data = await res.json();
+        setMetadata(data);
       }
+    } catch (e) { setMetadata([]); }
+    
+    player.replace({ uri: audioUri });
+    player.play();
+    
+    // Updated speed setting logic
+    if (player) {
+      player.playbackSpeed = playbackSpeed;
     }
-    const now = Date.now();
-    if (playingId && status.currentTime > 0 && (now - lastSaveTime.current > 5000)) {
-      lastSaveTime.current = now;
-      AsyncStorage.setItem('MVS_PROGRESS', JSON.stringify({ id: playingId, time: status.currentTime }));
+  }, [player, playbackSpeed]);
+
+  const handleNextChapter = () => {
+    const currentIndex = visibleChapters.findIndex(c => c.id === playingId);
+    if (currentIndex !== -1 && currentIndex < visibleChapters.length - 1) {
+      handleAction(visibleChapters[currentIndex + 1]);
     }
-  }, [status.didJustFinish, status.currentTime, playingId, chapters, offlineIds, handleAction]);
+  };
+
+  const handlePreviousChapter = () => {
+    const currentIndex = visibleChapters.findIndex(c => c.id === playingId);
+    if (currentIndex > 0) {
+      handleAction(visibleChapters[currentIndex - 1]);
+    } else {
+      player.seekTo(0);
+    }
+  };
+
+  const cycleSpeed = () => {
+    const speeds = [1.0, 1.25, 1.5, 2.0];
+    const next = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+    setPlaybackSpeed(next);
+    if (player) {
+      player.playbackSpeed = next;
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      const info = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory);
+      setOfflineIds(new Set(info.filter(f => f.endsWith('.mp3')).map(f => f.replace('.mp3', ''))));
+      const res = await fetch(`${API_BASE}/chapters?limit=1000`).catch(() => null);
+      if (res) {
+        const data = await res.json();
+        setChapters(data.items || []);
+      }
+    })();
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <View style={styles.logo}><Headphones color="white" size={18} /></View>
-          <Text style={styles.headerTitle}>MVS AUDIOBOOK</Text>
+        <Text style={styles.brand}>MVS<Text style={{color: '#3b82f6'}}>AUDIO</Text></Text>
+        <View style={styles.searchBox}>
+          <Search color="#64748b" size={18} />
+          <TextInput style={styles.input} placeholder="Search library..." placeholderTextColor="#64748b" value={searchQuery} onChangeText={setSearchQuery} />
         </View>
-        <View style={styles.searchContainer}>
-          <Search color="#64748b" size={16} />
-          <TextInput style={styles.searchInput} placeholder="Search..." placeholderTextColor="#64748b" value={searchQuery} onChangeText={setSearchQuery}/>
+        <View style={styles.pillRow}>
+          <TouchableOpacity style={[styles.pill, showOfflineOnly && styles.pillActive]} onPress={() => setShowOfflineOnly(!showOfflineOnly)}>
+            <Library size={14} color={showOfflineOnly ? "white" : "#94a3b8"} />
+            <Text style={[styles.pillText, showOfflineOnly && {color: 'white'}]}>Offline Only</Text>
+          </TouchableOpacity>
+          {missingChapters.length > 0 && (
+            <TouchableOpacity style={styles.pill} onPress={() => setIsDownloadModalVisible(true)}>
+              <DownloadCloud size={14} color="#94a3b8" />
+              <Text style={styles.pillText}>Sync ({missingChapters.length})</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      {missingChapters.length > 0 && (
-        <TouchableOpacity style={styles.downloadBar} onPress={() => setIsModalVisible(true)} disabled={isDownloadingAll}>
-          {isDownloadingAll ? <ActivityIndicator size="small" color="white" /> : <DownloadCloud color="white" size={18} />}
-          <Text style={styles.downloadBarText}>
-            {isDownloadingAll ? `Downloading Queue...` : `Sync Chapters (${missingChapters.length})`}
-          </Text>
-        </TouchableOpacity>
+      <FlatList 
+        data={visibleChapters}
+        contentContainerStyle={{padding: 20, paddingBottom: 250}}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity style={styles.row} onPress={() => handleAction(item)}>
+            <View style={{flex: 1}}>
+              <Text style={[styles.rowTitle, playingId === item.id && {color: '#3b82f6'}]}>{item.name}</Text>
+              <Text style={styles.rowMeta}>{offlineIds.has(item.id) ? "Downloaded" : "Available Online"}</Text>
+            </View>
+            {offlineIds.has(item.id) ? <CheckCircle2 size={18} color="#10b981" /> : <DownloadCloud size={18} color="#1e293b" />}
+          </TouchableOpacity>
+        )}
+      />
+
+      {activeChapter && (
+        <View style={styles.player}>
+          <View style={styles.progressContainer}>
+            <View style={[styles.progressBar, { width: `${(status.currentTime/status.duration)*100 || 0}%` }]} />
+          </View>
+          <View style={styles.playerContent}>
+            <View style={styles.playerHeader}>
+               <TouchableOpacity onPress={cycleSpeed} style={styles.speedBadge}>
+                 <Text style={styles.speedText}>{playbackSpeed}x</Text>
+               </TouchableOpacity>
+               <Text style={styles.activeTitle} numberOfLines={1}>{activeChapter.name}</Text>
+               <View style={{width: 40}} /> 
+            </View>
+            <View style={styles.transcriptBox}>
+              <Text style={styles.transcript}>
+                {metadata.find(m => status.currentTime >= m.start && status.currentTime <= m.end)?.text || "..."}
+              </Text>
+            </View>
+            <View style={styles.controls}>
+              <TouchableOpacity onPress={handlePreviousChapter}><SkipBack color="white" size={32} /></TouchableOpacity>
+              <TouchableOpacity onPress={() => player.seekTo(status.currentTime - 15)}><Undo2 color="white" size={32} /></TouchableOpacity>
+              <TouchableOpacity onPress={() => status.playing ? player.pause() : player.play()}>
+                {status.playing ? <PauseCircle color="#3b82f6" size={70} fill="white" /> : <Play color="#3b82f6" size={70} fill="white" />}
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => player.seekTo(status.currentTime + 15)}><Redo2 color="white" size={32} /></TouchableOpacity>
+              <TouchableOpacity onPress={handleNextChapter}><SkipForward color="white" size={32} /></TouchableOpacity>
+            </View>
+          </View>
+        </View>
       )}
 
-      {/* MULTI-SELECT MODAL */}
-      <Modal visible={isModalVisible} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Select to Sync</Text>
-                <Text style={styles.modalSubtitle}>Slide checkboxes to multi-select</Text>
-              </View>
-              <TouchableOpacity onPress={() => setSelectedForDownload(new Set())}><Text style={styles.clearText}>Clear</Text></TouchableOpacity>
+      <Modal visible={isDownloadModalVisible} transparent animationType="slide">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalTop}>
+              <Text style={styles.modalHeading}>Sync to Device</Text>
+              <TouchableOpacity onPress={() => setIsDownloadModalVisible(false)}><X color="white" /></TouchableOpacity>
             </View>
-            <View style={styles.listContainer}>
-              <ScrollView 
-                onScroll={(e) => { scrollOffset.current = e.nativeEvent.contentOffset.y; }}
-                scrollEventThrottle={16}
-              >
-                {missingChapters.map((ch) => (
-                  <View key={ch.id} style={[styles.selectionRow, selectedForDownload.has(ch.id) && styles.rowSelected]}>
-                    <View 
-                      style={styles.dragHandle}
-                      onStartShouldSetResponder={() => true}
-                      onResponderMove={handleMove}
-                    >
-                      <View style={[styles.checkbox, selectedForDownload.has(ch.id) && styles.checkboxActive]}>
-                        {selectedForDownload.has(ch.id) && <Check size={12} color="white" strokeWidth={3} />}
-                      </View>
-                    </View>
-                    <Text style={styles.selectionText} numberOfLines={1}>{ch.name}</Text>
-                  </View>
-                ))}
-              </ScrollView>
-            </View>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsModalVisible(false)}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={downloadSelected}><Text style={styles.confirmText}>Download {selectedForDownload.size}</Text></TouchableOpacity>
-            </View>
+            <ScrollView style={{maxHeight: 350}}>
+              {missingChapters.map(ch => (
+                <TouchableOpacity key={ch.id} style={styles.selectRow} onPress={() => {
+                  const n = new Set(selectedForDownload);
+                  n.has(ch.id) ? n.delete(ch.id) : n.add(ch.id);
+                  setSelectedForDownload(n);
+                }}>
+                  {selectedForDownload.has(ch.id) ? <CheckSquare color="#3b82f6" /> : <Square color="#475569" />}
+                  <Text style={{color: 'white', marginLeft: 15, fontSize: 16}}>{ch.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.actionBtn} onPress={downloadSelected}>
+              <Text style={styles.actionBtnText}>Download {selectedForDownload.size} (With Transcripts)</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
-
-      {/* PLAYER */}
-      <View style={styles.workspace}>
-        <View style={styles.playerCard}>
-          <Text style={styles.chTitle} numberOfLines={1}>{activeChapter?.name || "Ready to Listen"}</Text>
-          <View style={styles.displayArea}>
-            <Text style={styles.displayText}>
-              {metadata.find(m => status.currentTime >= m.start && status.currentTime <= m.end)?.text || "..."}
-            </Text>
-          </View>
-          <View style={styles.progressBar}><View style={[styles.progressFill, { width: `${(status.currentTime/status.duration)*100 || 0}%` }]} /></View>
-          <View style={styles.controls}>
-            <TouchableOpacity onPress={() => player.seekTo(status.currentTime - 10)}><Undo2 color="#94a3b8" size={30} /></TouchableOpacity>
-            <TouchableOpacity onPress={() => status.playing ? player.pause() : player.play()}>
-              {status.playing ? <PauseCircle color="#3b82f6" size={72} fill="white" /> : <Play color="#3b82f6" size={72} fill="white" />}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => player.seekTo(status.currentTime + 10)}><Redo2 color="#94a3b8" size={30} /></TouchableOpacity>
-          </View>
-        </View>
-      </View>
-      
-      {/* MINI LIST */}
-      <View style={styles.miniListWrapper}>
-        <FlatList 
-          ref={flatListRef}
-          data={chapters.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))}
-          keyExtractor={item => item.id} 
-          horizontal 
-          renderItem={({ item }) => (
-            <TouchableOpacity 
-              style={[styles.miniCard, playingId === item.id && styles.miniActive]} 
-              onPress={() => handleAction(item)}
-            >
-              <Text style={[styles.miniText, playingId === item.id && {color: 'white'}]} numberOfLines={2}>{item.name}</Text>
-              {offlineIds.has(item.id) && <CheckCircle2 size={12} color="#4ade80" style={{marginTop: 6}} />}
-            </TouchableOpacity>
-          )}
-        />
-      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#020617' },
-  header: { padding: 16, backgroundColor: '#0f172a' },
-  titleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  logo: { backgroundColor: '#3b82f6', padding: 6, borderRadius: 8 },
-  headerTitle: { color: 'white', fontSize: 18, fontWeight: '900', marginLeft: 10 },
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e293b', paddingHorizontal: 12, borderRadius: 10, height: 40 },
-  searchInput: { flex: 1, color: 'white', marginLeft: 10 },
-  downloadBar: { backgroundColor: '#3b82f6', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12 },
-  downloadBarText: { color: 'white', fontWeight: 'bold', fontSize: 13, marginLeft: 10 },
-  workspace: { flex: 1, justifyContent: 'center', padding: 20 },
-  playerCard: { backgroundColor: '#0f172a', borderRadius: 32, padding: 30, alignItems: 'center', borderWidth: 1, borderColor: '#1e293b' },
-  chTitle: { color: '#f1f5f9', fontSize: 16, fontWeight: 'bold' },
-  displayArea: { height: 160, justifyContent: 'center' },
-  displayText: { color: '#f1f5f9', fontSize: 22, textAlign: 'center', fontWeight: '500' },
-  progressBar: { height: 4, width: '100%', backgroundColor: '#1e293b', borderRadius: 2, marginBottom: 20 },
-  progressFill: { height: '100%', backgroundColor: '#3b82f6', borderRadius: 2 },
-  controls: { flexDirection: 'row', alignItems: 'center', gap: 20 },
-  miniListWrapper: { position: 'absolute', bottom: 30, width: '100%', height: 90 },
-  miniCard: { backgroundColor: '#0f172a', width: 140, height: 80, marginHorizontal: 8, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#1e293b', justifyContent: 'center' },
-  miniActive: { backgroundColor: '#3b82f6', borderColor: '#60a5fa' },
-  miniText: { color: '#94a3b8', fontSize: 12, fontWeight: 'bold' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#0f172a', borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 24, maxHeight: '80%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  modalSubtitle: { color: '#64748b', fontSize: 12 },
-  clearText: { color: '#3b82f6', fontWeight: 'bold' },
-  listContainer: { height: 350, backgroundColor: '#020617', borderRadius: 16, overflow: 'hidden' },
-  selectionRow: { flexDirection: 'row', alignItems: 'center', height: ITEM_HEIGHT, borderBottomWidth: 0.5, borderBottomColor: '#1e293b' },
-  rowSelected: { backgroundColor: 'rgba(59, 130, 246, 0.15)' },
-  dragHandle: { paddingLeft: 16, paddingRight: 20, height: '100%', justifyContent: 'center' },
-  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: '#3b82f6', justifyContent: 'center', alignItems: 'center' },
-  checkboxActive: { backgroundColor: '#3b82f6' },
-  selectionText: { color: '#f1f5f9', fontSize: 14, flex: 1 },
-  modalButtons: { flexDirection: 'row', gap: 12, marginTop: 24 },
-  cancelBtn: { flex: 1, padding: 16, borderRadius: 14, backgroundColor: '#1e293b', alignItems: 'center' },
-  confirmBtn: { flex: 2, padding: 16, borderRadius: 14, backgroundColor: '#3b82f6', alignItems: 'center' },
-  cancelText: { color: '#94a3b8', fontWeight: 'bold' },
-  confirmText: { color: 'white', fontWeight: 'bold' }
+  header: { padding: 20, backgroundColor: '#0f172a', borderBottomWidth: 1, borderBottomColor: '#1e293b' },
+  brand: { color: 'white', fontSize: 24, fontWeight: '900', marginBottom: 15 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#020617', paddingHorizontal: 12, borderRadius: 12, height: 45 },
+  input: { flex: 1, color: 'white', marginLeft: 10 },
+  pillRow: { flexDirection: 'row', gap: 10, marginTop: 15 },
+  pill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e293b', padding: 8, paddingHorizontal: 12, borderRadius: 20, gap: 6 },
+  pillActive: { backgroundColor: '#3b82f6' },
+  pillText: { color: '#94a3b8', fontSize: 12, fontWeight: '700' },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#0f172a' },
+  rowTitle: { color: '#f1f5f9', fontSize: 16, fontWeight: '600' },
+  rowMeta: { color: '#475569', fontSize: 12, marginTop: 4 },
+  player: { position: 'absolute', bottom: 0, width: '100%', backgroundColor: '#0f172a', borderTopLeftRadius: 30, borderTopRightRadius: 30 },
+  progressContainer: { height: 4, backgroundColor: '#1e293b' },
+  progressBar: { height: '100%', backgroundColor: '#3b82f6' },
+  playerContent: { padding: 25, alignItems: 'center', paddingBottom: 40 },
+  playerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' },
+  speedBadge: { backgroundColor: '#1e293b', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  speedText: { color: '#3b82f6', fontWeight: 'bold', fontSize: 12 },
+  activeTitle: { color: 'white', fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
+  transcriptBox: { height: 60, justifyContent: 'center', marginTop: 10 },
+  transcript: { color: '#94a3b8', fontSize: 15, textAlign: 'center', lineHeight: 22 },
+  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginTop: 15, paddingHorizontal: 10 },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: '#0f172a', padding: 25, borderTopLeftRadius: 30, borderTopRightRadius: 30 },
+  modalTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 25 },
+  modalHeading: { color: 'white', fontSize: 20, fontWeight: 'bold' },
+  selectRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#1e293b' },
+  actionBtn: { backgroundColor: '#3b82f6', padding: 18, borderRadius: 15, marginTop: 25, alignItems: 'center' },
+  actionBtnText: { color: 'white', fontWeight: 'bold' }
 });
