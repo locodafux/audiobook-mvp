@@ -52,17 +52,37 @@ export default function App() {
   // Update ref whenever playingId changes
   useEffect(() => {
     playingIdRef.current = playingId;
+    console.log('🎯 playingId updated:', playingId);
   }, [playingId]);
 
   // ============ LOGGING FUNCTIONS ============
   
   const logChapters = (chapterArray, title = "Chapters") => {
+    console.log(`\n📚 ${title} (${chapterArray.length} total):`);
+    console.log('═════════════════════════════════════');
     chapterArray.forEach((ch, index) => {
       const isDownloaded = offlineIds.has(ch.id) ? '📱' : '☁️';
       const isPlaying_now = playingId === ch.id ? '▶️' : '  ';
+      console.log(`${index.toString().padStart(3)}. ${isPlaying_now} ${isDownloaded} [${ch.id}] ${ch.name}`);
     });
+    console.log('═════════════════════════════════════\n');
   };
-  
+
+  const logVisibleChapters = () => {
+    if (visibleChapters.length > 0) {
+      const mode = !isOnline ? 'OFFLINE' : (showOfflineOnly ? 'DOWNLOADED ONLY' : 'ALL CHAPTERS');
+      console.log(`\n👁️ VISIBLE CHAPTERS (${mode}) - ${visibleChapters.length} items:`);
+      console.log('═════════════════════════════════════');
+      visibleChapters.forEach((ch, index) => {
+        const isDownloaded = offlineIds.has(ch.id) ? '📱' : '☁️';
+        const isPlaying_now = playingId === ch.id ? '▶️' : '  ';
+        const isNext = (playingId && index === visibleChapters.findIndex(c => c.id === playingId) + 1) ? '⏭️' : '  ';
+        console.log(`${index.toString().padStart(3)}. ${isPlaying_now}${isNext} ${isDownloaded} [${ch.id}] ${ch.name}`);
+      });
+      console.log('═════════════════════════════════════\n');
+    }
+  };
+
   const logPlaybackStatus = (status) => {
     console.log('\n🎵 Playback Status:');
     console.log(`   Position: ${Math.floor(status.positionMillis/1000)}s / ${Math.floor(status.durationMillis/1000)}s`);
@@ -154,6 +174,8 @@ export default function App() {
         const cachedData = JSON.parse(cached);
         // Don't sort cached data - preserve original order
         setChapters(cachedData);
+        console.log(`📚 Loaded ${cachedData.length} chapters from cache`);
+        logChapters(cachedData, 'CACHED CHAPTERS');
         return true;
       } else {
         console.log('📭 No cached chapters found');
@@ -312,11 +334,14 @@ export default function App() {
       setCurrentTime(status.positionMillis / 1000);
       setPosition(status.positionMillis / 1000);
       
+      // Log playback status every 30 seconds or on finish
       if (status.didJustFinish || Math.floor(status.positionMillis/1000) % 30 === 0) {
         logPlaybackStatus(status);
       }
       
+      // Check if playback just finished
       if (status.didJustFinish) {
+        // Get the current playing ID from ref (preserved during cleanup)
         const currentPlayingId = playingIdRef.current;
         
         console.log('\n🔴🔴🔴 CHAPTER FINISHED 🔴🔴🔴');
@@ -327,9 +352,13 @@ export default function App() {
         setCurrentTime(0);
         setPosition(0);
         
+        // Log the current state
+        logVisibleChapters();
         
+        // If auto-next is on, find the next chapter
         if (autoNext && currentPlayingId) {
           
+          // Find the current chapter in visible list by ID
           const currentIndex = visibleChapters.findIndex(c => c.id === currentPlayingId);
           console.log(`📍 Current index in list: ${currentIndex}`);
           console.log(`📊 Total chapters in list: ${visibleChapters.length}`);
@@ -541,6 +570,7 @@ export default function App() {
       setOfflineIds(offline);
       console.log(`📱 Found ${offline.size} downloaded files`);
       
+      logChapters(chaptersData, 'FRESH CHAPTERS FROM SERVER');
       
       Alert.alert("Success", "Chapters updated successfully!");
       
@@ -572,6 +602,7 @@ export default function App() {
             await cacheChapters(chaptersData);
             setChapters(chaptersData);
             console.log(`📥 Fetched ${chaptersData.length} chapters from server`);
+            logChapters(chaptersData, 'FRESH CHAPTERS');
           } catch (error) {
             console.log('⚠️ Using cached chapters due to fetch error');
           }
@@ -598,6 +629,8 @@ export default function App() {
         setOfflineIds(offline);
         console.log(`📱 Found ${offline.size} downloaded files`);
         
+        // Log final state
+        logChapters(currentChapters, 'FINAL CHAPTERS');
         
       } catch (error) {
         console.error('Init error:', error);
@@ -610,25 +643,31 @@ export default function App() {
     init();
   }, [isOnline]);
 
+  // Determine which chapters to show based on online status
   const visibleChapters = useMemo(() => {
     let filtered = [];
     
     if (!isOnline) {
       // When offline, show downloaded chapters in their ORIGINAL order
       filtered = chapters.filter(c => offlineIds.has(c.id));
+      console.log(`👁️ OFFLINE MODE: Showing ${filtered.length} downloaded chapters`);
     } else if (showOfflineOnly) {
       // When showing only downloaded, preserve the ORIGINAL order
       filtered = chapters.filter(c => offlineIds.has(c.id));
+      console.log(`👁️ DOWNLOADED ONLY: Showing ${filtered.length} downloaded chapters`);
     } else {
       // When showing all chapters, sort them for better organization
       filtered = sortChapters(chapters);
+      console.log(`👁️ ALL CHAPTERS: Showing ${filtered.length} chapters (sorted)`);
     }
     
     return filtered;
   }, [chapters, offlineIds, showOfflineOnly, isOnline]);
 
   // Log visible chapters whenever they change
-
+  useEffect(() => {
+    logVisibleChapters();
+  }, [visibleChapters, playingId]);
 
   // Debug: Monitor playing ID and next chapter
   useEffect(() => {
